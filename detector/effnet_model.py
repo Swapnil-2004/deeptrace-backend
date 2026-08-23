@@ -210,6 +210,29 @@ def predict(img: Image.Image) -> Tuple[float, Optional[np.ndarray]]:
         return 0.5, None
 
 
+def unload_effnet() -> None:
+    """
+    Free this model's memory. Called after predict() completes,
+    so RAM is available for the next model in the pipeline
+    (needed to fit within Render free tier's 512MB limit).
+
+    Does NOT affect accuracy in any way -- the model is simply
+    reloaded fresh (same weights, same file) the next time
+    predict() is called.
+    """
+    global _model, _hooks, _activations
+
+    for hook in _hooks:
+        hook.remove()
+    _hooks = []
+    _activations = {}
+
+    _model = None
+
+    import gc
+    gc.collect()
+
+
 def is_loaded() -> bool:
     """Check if model is loaded and ready."""
     return _model is not None

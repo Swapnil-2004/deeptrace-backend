@@ -182,5 +182,24 @@ def predict(face_crop_img: Image.Image) -> Tuple[float, Optional[np.ndarray]]:
         return 0.5, None
 
 
+def unload_effnet_video() -> None:
+    """
+    Free this model's memory after use, to stay within the
+    Render free tier's 512MB RAM limit. No accuracy impact --
+    same weights reload fresh next time predict() is called.
+    """
+    global _model, _hooks, _activations
+
+    for hook in _hooks:
+        hook.remove()
+    _hooks = []
+    _activations = {}
+
+    _model = None
+
+    import gc
+    gc.collect()
+
+
 def is_loaded() -> bool:
     return _model is not None

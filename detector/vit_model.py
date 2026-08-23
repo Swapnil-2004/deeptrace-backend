@@ -152,6 +152,20 @@ def _extract_fake_score(results: list) -> float:
     return float(results[0].get("score", 0.5))
 
 
+def unload_vit() -> None:
+    """
+    Free this model's memory after use, to stay within the
+    Render free tier's 512MB RAM limit. No accuracy impact --
+    the pipeline reloads fresh (same HuggingFace model) next
+    time predict() is called.
+    """
+    global _pipeline
+    _pipeline = None
+
+    import gc
+    gc.collect()
+
+
 def is_loaded() -> bool:
     """Check if model is loaded and ready."""
     return _pipeline is not None

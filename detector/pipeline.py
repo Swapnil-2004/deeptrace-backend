@@ -133,6 +133,12 @@ def analyse_image_bytes(image_bytes: bytes,
     effnet_score, activations = effnet_model.predict(img)
     print(f"[Pipeline] EfficientNet score: {effnet_score:.3f}")
 
+    # Free EfficientNet from memory before loading ViT -- keeps peak
+    # RAM low enough for Render's free 512MB tier. No accuracy impact;
+    # activations are already captured above and heatmap uses only
+    # that captured array, not the live model.
+    effnet_model.unload_effnet()
+
     # ── Step 5: Grad-CAM heatmap ─────────────────────────────
     print("[Pipeline] Step 5: Generating Grad-CAM heatmap...")
     heatmap_b64 = gradcam.generate_heatmap(
@@ -144,6 +150,9 @@ def analyse_image_bytes(image_bytes: bytes,
     # Use full image consistently — same reasoning as EfficientNet
     vit_score = vit_model.predict(img)
     print(f"[Pipeline] ViT score: {vit_score:.3f}")
+
+    # Free ViT from memory now that this request's inference is done
+    vit_model.unload_vit()
 
     # ── Step 7: Metadata analysis ────────────────────────────
     print("[Pipeline] Step 7: Metadata analysis...")
@@ -297,6 +306,13 @@ def analyse_video_file(video_path: str,
     print(f"[Pipeline] Frame scores: "
           f"mean={np.mean(frame_scores):.3f} "
           f"max={max(frame_scores):.3f}")
+
+    # Free both models now that all frames are processed -- keeps
+    # peak RAM low for Render's free 512MB tier. Not unloaded per-frame
+    # since these two models are needed together on every frame;
+    # unloading mid-loop would force 30 reloads for no benefit.
+    effnet_video_model.unload_effnet_video()
+    vit_model.unload_vit()
 
     # ── Step 4: Temporal BTD (mam's algorithm) ───────────────
     print("[Pipeline] Step 4: Temporal BTD analysis...")
