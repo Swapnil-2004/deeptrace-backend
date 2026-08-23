@@ -1,0 +1,21 @@
+# Python
+venv/
+__pycache__/
+*.pyc
+
+# Model weights — downloaded at runtime from HuggingFace, not stored in git
+models/*.pth
+models/*.task
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Old/unused backup files
+app_pre_cors_fix.py
+detector/effnet_model_before_dev.py
+detector/effnet_video_model_before_dev.py
+detector/pipeline_pre_signals_fix.py
+
+# Training scripts/data — not needed for deployment
+Train/
