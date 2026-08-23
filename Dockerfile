@@ -12,6 +12,8 @@ RUN apt-get update && apt-get install -y \
     libxext6 \
     libxrender-dev \
     libgl1 \
+    libgles2 \
+    libegl1 \
     libgstreamer1.0-0 \
     && rm -rf /var/lib/apt/lists/*
 
