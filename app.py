@@ -45,6 +45,19 @@ async def lifespan(app: FastAPI):
     print("DeepTrace Backend Starting...")
     print("=" * 60)
 
+    # Limit internal thread pools -- reduces memory used by
+    # per-thread buffers in PyTorch and OpenCV. Does not change
+    # any computation or results, only how many threads compute
+    # them (needed to fit within Render free tier's 512MB RAM).
+    try:
+        import torch
+        import cv2
+        torch.set_num_threads(1)
+        cv2.setNumThreads(1)
+        print("[OK] Limited torch/cv2 to 1 thread each (memory optimization)")
+    except Exception as e:
+        print(f"[WARNING] Could not set thread limits: {e}")
+
     try:
         from detector.pipeline import load_all_models
         load_all_models()

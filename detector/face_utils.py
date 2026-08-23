@@ -132,6 +132,29 @@ def _run_landmarker(img: Image.Image):
         return None
 
 
+def unload_landmarker() -> None:
+    """
+    Free MediaPipe's FaceLandmarker from memory.
+    Called after face detection is done for a request, since the
+    extracted landmarks/masks are already copied out as plain numpy
+    arrays by that point -- the live MediaPipe object itself is no
+    longer needed. This keeps peak RAM low enough for Render's free
+    512MB tier. No accuracy impact -- reinitialises identically
+    (same .task model file) next time it's needed.
+    """
+    global _landmarker
+
+    if _landmarker is not None:
+        try:
+            _landmarker.close()
+        except Exception:
+            pass
+        _landmarker = None
+
+    import gc
+    gc.collect()
+
+
 def detect_face(img: Image.Image) -> Optional[Dict]:
     """
     Detect the primary face in an image.

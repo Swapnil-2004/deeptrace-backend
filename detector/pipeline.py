@@ -117,6 +117,11 @@ def analyse_image_bytes(image_bytes: bytes,
 
     print(f"[Pipeline] Face found: {face_found}")
 
+    # Free MediaPipe's landmarker now -- landmarks/masks are already
+    # captured as plain numpy arrays in face_data above, so the live
+    # detector object is no longer needed for the rest of this request.
+    face_utils.unload_landmarker()
+
     # ── Step 3: BTD forensic signals (mam's algorithm) ───────
     print("[Pipeline] Step 3: BTD forensic analysis...")
     btd_result = btd.run_all_signals(
@@ -313,6 +318,7 @@ def analyse_video_file(video_path: str,
     # unloading mid-loop would force 30 reloads for no benefit.
     effnet_video_model.unload_effnet_video()
     vit_model.unload_vit()
+    face_utils.unload_landmarker()
 
     # ── Step 4: Temporal BTD (mam's algorithm) ───────────────
     print("[Pipeline] Step 4: Temporal BTD analysis...")
