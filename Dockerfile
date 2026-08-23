@@ -19,7 +19,7 @@ RUN apt-get update && apt-get install -y \
 COPY requirements.txt .
 
 # Install PyTorch CPU version (Render free tier has no GPU)
-RUN pip install --no-cache-dir torch==2.11.0 torchvision==0.26.0 --index-url https://download.pytorch.org/whl/cpu
+RUN pip install --no-cache-dir torch==2.11.0 torchvision==0.26.0 --extra-index-url https://download.pytorch.org/whl/cpu
 
 # Install remaining dependencies
 RUN pip install --no-cache-dir -r requirements.txt
