@@ -48,33 +48,30 @@ _video_model_loaded = False
 
 def load_all_models() -> None:
     """
-    Load all ML models into memory.
-    Called once on server startup by app.py lifespan.
+    Startup hook — kept for backward compatibility with app.py's lifespan.
+
+    IMPORTANT: This no longer eagerly loads models. On memory-constrained
+    hosts (like Render's free 512MB tier), loading all 3 heavy models
+    (2x EfficientNet-B4 + ViT transformer) at once during startup both:
+    1. Blocks the port from opening in time (Render's health check times out)
+    2. Exceeds the 512MB RAM limit immediately
+
+    Instead, each model now lazy-loads itself the first time predict()
+    is called on it (see effnet_model.py, effnet_video_model.py,
+    vit_model.py). This means a pure-image request only ever loads
+    effnet_model + vit_model, not the unused video model -- reducing
+    typical peak memory.
     """
     global _models_loaded, _video_model_loaded
 
-    print("[Pipeline] Loading all models...")
+    print("[Pipeline] Startup: models will lazy-load on first use "
+          "(not loaded eagerly, to fit within memory limits).")
 
-    # Load EfficientNet-B4 (image model)
-    effnet_ok = effnet_model.load_effnet()
-
-    # Load EfficientNet-B4 (video model -- separate weights)
-    video_effnet_ok = effnet_video_model.load_effnet_video()
-
-    # Load ViT
-    vit_ok = vit_model.load_vit()
-
-    # MediaPipe loads lazily on first use — no explicit load needed
-
-    _models_loaded = effnet_ok or vit_ok
-    _video_model_loaded = video_effnet_ok
-
-    print(f"[Pipeline] Models ready: "
-          f"EfficientNet(image)={effnet_ok} EfficientNet(video)={video_effnet_ok} ViT={vit_ok}")
-
-    if not video_effnet_ok:
-        print("[Pipeline] WARNING: video model not loaded -- video analysis will "
-              "fall back to the image model, which was NOT trained for this use case.")
+    # Report as "ready" immediately since lazy loading means the app
+    # can serve requests right away; individual predict() calls handle
+    # loading and will report failures at that point if any occur.
+    _models_loaded = True
+    _video_model_loaded = True
 
 
 def models_loaded() -> bool:

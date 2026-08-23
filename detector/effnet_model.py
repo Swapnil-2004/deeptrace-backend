@@ -177,8 +177,10 @@ def predict(img: Image.Image) -> Tuple[float, Optional[np.ndarray]]:
                        or None if hook not available
     """
     if _model is None:
-        print("[WARNING] EfficientNet not loaded — returning 0.5")
-        return 0.5, None
+        print("[EffNet] Not loaded yet — loading now (lazy load)...")
+        if not load_effnet():
+            print("[WARNING] EfficientNet lazy load failed — returning 0.5")
+            return 0.5, None
 
     try:
         from utils.image_utils import pil_to_tensor

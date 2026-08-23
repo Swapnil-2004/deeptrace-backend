@@ -155,8 +155,10 @@ def predict(face_crop_img: Image.Image) -> Tuple[float, Optional[np.ndarray]]:
     Matches effnet_model.predict()'s interface exactly.
     """
     if _model is None:
-        print("[WARNING] Video EfficientNet not loaded -- returning 0.5")
-        return 0.5, None
+        print("[EffNetVideo] Not loaded yet — loading now (lazy load)...")
+        if not load_effnet_video():
+            print("[WARNING] Video EfficientNet lazy load failed -- returning 0.5")
+            return 0.5, None
 
     try:
         tensor = _preprocess(face_crop_img).to(_device)

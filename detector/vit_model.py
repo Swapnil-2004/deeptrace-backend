@@ -83,8 +83,10 @@ def predict(img: Image.Image) -> float:
         fake_score: float 0-1 (1 = definitely AI generated)
     """
     if _pipeline is None:
-        print("[WARNING] ViT not loaded — returning 0.5")
-        return 0.5
+        print("[ViT] Not loaded yet — loading now (lazy load)...")
+        if not load_vit():
+            print("[WARNING] ViT lazy load failed — returning 0.5")
+            return 0.5
 
     try:
         # Run inference
