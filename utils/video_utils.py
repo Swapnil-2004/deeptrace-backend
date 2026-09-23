@@ -9,9 +9,10 @@ video metadata reading, and cleanup.
 
 import os
 import cv2
+import tempfile
 import numpy as np
 from PIL import Image
-from typing import List, Tuple, Dict
+from typing import List, Tuple, Dict, Optional
 
 
 def get_video_info(video_path: str) -> Dict:
@@ -48,7 +49,7 @@ def get_video_info(video_path: str) -> Dict:
 
 
 def sample_frames(video_path: str,
-                  max_frames: int = 30) -> Tuple[List[np.ndarray], List[int]]:
+                  max_frames: int = 30) -> Tuple[List[np.ndarray], List[int], Optional[str]]:
     """
     Sample frames evenly from a video.
 
@@ -57,14 +58,21 @@ def sample_frames(video_path: str,
     - Medium video (10-60s): sample max_frames evenly
     - Long video (>60s): sample max_frames evenly distributed
 
+    Memory note: frames are written to a temp .npy file on disk and
+    reopened with mmap_mode="r" instead of being kept fully in RAM.
+    Pixel values are identical either way -- only where they live in
+    memory changes. Caller MUST pass the returned temp_path to
+    cleanup_temp_file() when done with the frames.
+
     Args:
         video_path: path to video file
         max_frames: maximum number of frames to extract
 
     Returns:
         Tuple of:
-        - list of frames as numpy arrays (H, W, 3) BGR
+        - memory-mapped array of frames (N, H, W, 3) BGR, indexable like a list
         - list of frame indices that were sampled
+        - path to the temp .npy file (pass to cleanup_temp_file() when done)
     """
     info         = get_video_info(video_path)
     total        = info["total_frames"]
@@ -106,7 +114,20 @@ def sample_frames(video_path: str,
     if len(frames) == 0:
         raise ValueError("Could not extract any frames from video")
 
-    return frames, sampled_indices
+    # Stack into one array and write to a temp .npy file, then reopen
+    # with mmap_mode="r" so frames live on disk, not fully in RAM.
+    # Values are bit-identical to the original in-RAM list.
+    stacked = np.stack(frames, axis=0)
+    del frames
+
+    tmp_fd, tmp_path = tempfile.mkstemp(suffix=".npy")
+    os.close(tmp_fd)
+    np.save(tmp_path, stacked)
+    del stacked
+
+    frames_mmap = np.load(tmp_path, mmap_mode="r")
+
+    return frames_mmap, sampled_indices, tmp_path
 
 
 def bgr_to_pil(frame: np.ndarray) -> Image.Image:

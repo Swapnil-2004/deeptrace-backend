@@ -233,9 +233,9 @@ def analyse_video_file(video_path: str,
           f"{video_info['total_frames']} frames "
           f"{video_info['duration_sec']}s")
 
-    # ── Step 2: Sample frames ────────────────────────────────
+    # ── Step 2: Sample frames ────────────────────────────────────
     print("[Pipeline] Step 2: Sampling frames...")
-    frames, frame_indices = video_utils.sample_frames(
+    frames, frame_indices, frames_temp_path = video_utils.sample_frames(
         video_path, max_frames=30
     )
     print(f"[Pipeline] Sampled {len(frames)} frames")
@@ -329,12 +329,22 @@ def analyse_video_file(video_path: str,
         frame_scores = frame_scores
     )
 
-    # ── Step 5: Optical flow analysis ────────────────────────
+    # ── Step 5: Optical flow analysis ─────────────────────────────
     print("[Pipeline] Step 5: Optical flow analysis...")
     flow_result = optical_flow.compute_flow_score(
         frames     = frames,
         face_masks = all_face_masks
     )
+
+    # Done with frames now -- close the mmap and delete the temp .npy
+    # file it was backed by. No effect on results, just cleanup.
+    # frames_count is captured here since "frames" itself is deleted
+    # below but its length is still needed later in the response dict.
+    frames_count = len(frames)
+    if hasattr(frames, "_mmap") and frames._mmap is not None:
+        frames._mmap.close()
+    del frames
+    video_utils.cleanup_temp_file(frames_temp_path)
 
     # ── Step 6: Metadata analysis on video file ──────────────
     print("[Pipeline] Step 6: Metadata check...")
@@ -379,7 +389,7 @@ def analyse_video_file(video_path: str,
         "video_info": {
             "fps"             : video_info["fps"],
             "total_frames"    : video_info["total_frames"],
-            "frames_analysed" : len(frames),
+            "frames_analysed" : frames_count,
             "duration_sec"    : video_info["duration_sec"],
         },
         "per_frame_scores" : [round(s, 4) for s in frame_scores],
