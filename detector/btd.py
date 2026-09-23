@@ -26,6 +26,7 @@ import numpy as np
 from PIL import Image
 from typing import Dict, List, Optional, Tuple
 from scipy import stats
+from scipy import fft as sfft
 
 
 # ================================================================
@@ -442,23 +443,34 @@ def signal_h_high_frequency(img: Image.Image) -> Tuple[float, str]:
     """
     Analyse frequency domain using FFT.
     Low HF ratio = too smooth = AI signal.
+
+    Memory fix (Phase 2, 2.1): use scipy.fft instead of numpy.fft (smaller
+    complex64 output), and only compute the magnitude for the small disc+ring
+    region we actually use, instead of building a full fftshift'd image.
+    Result is numerically identical to the old version.
     """
     try:
         gray = np.array(img.convert("L"), dtype=np.float32)
 
-        # FFT magnitude spectrum
-        fft  = np.fft.fft2(gray)
-        fft_shift = np.fft.fftshift(fft)
-        mag  = np.abs(fft_shift)
-
-        h, w = mag.shape
+        h, w = gray.shape
         cy, cx = h // 2, w // 2
 
         # Define LF and HF regions by radius
         lf_r = min(h, w) // 8   # Low frequency: centre circle
         hf_r = min(h, w) // 4   # High frequency: outer ring
 
-        Y, X = np.ogrid[:h, :w]
+        # Only look at the square box that can contain the HF ring, instead of
+        # the whole fftshift'd image
+        y0, y1 = max(0, cy - hf_r), min(h, cy + hf_r + 1)
+        x0, x1 = max(0, cx - hf_r), min(w, cx + hf_r + 1)
+
+        fft = sfft.fft2(gray)                        # complex64, no fftshift built
+        ys = (np.arange(y0, y1) - h // 2) % h         # same rows fftshift would centre
+        xs = (np.arange(x0, x1) - w // 2) % w         # same cols fftshift would centre
+        mag = np.abs(fft[np.ix_(ys, xs)])
+        del fft
+
+        Y, X = np.ogrid[y0:y1, x0:x1]
         dist  = np.sqrt((X - cx)**2 + (Y - cy)**2)
 
         lf_mask = dist < lf_r
@@ -483,7 +495,7 @@ def signal_h_high_frequency(img: Image.Image) -> Tuple[float, str]:
         print(f"[BTD-H] Error: {e}")
         return 0.0, ""
 
-
+    
 # ================================================================
 # SIGNAL I — Facial Landmark Symmetry
 # Imported from face_utils.measure_facial_symmetry()
