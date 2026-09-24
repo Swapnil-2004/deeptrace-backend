@@ -154,6 +154,16 @@ def unload_landmarker() -> None:
     import gc
     gc.collect()
 
+    # On Linux (Render), ask glibc to actually return the memory gc just
+    # freed back to the OS, instead of glibc quietly keeping it reserved
+    # for reuse within this process. No effect on Windows/Mac (dev
+    # machine) or non-glibc Linux - silently no-ops there via try/except.
+    try:
+        import ctypes
+        ctypes.CDLL("libc.so.6").malloc_trim(0)
+    except Exception:
+        pass
+
 
 def detect_face(img: Image.Image) -> Optional[Dict]:
     """
