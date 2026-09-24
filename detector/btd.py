@@ -413,7 +413,10 @@ def signal_g_colour_kurtosis(img: Image.Image) -> Tuple[float, str]:
             (img_arr * 255).astype(np.uint8),
             cv2.COLOR_RGB2BGR
         )
+        del img_rgb, img_arr
+
         lab = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2LAB).astype(np.float32)
+        del img_bgr
 
         # Kurtosis of L, A, B channels
         kurtoses = []
