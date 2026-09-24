@@ -262,6 +262,11 @@ def signal_d_ela(img: Image.Image) -> Tuple[float, str]:
     """
     Error Level Analysis.
     Low block variance after re-save = no editing history = AI signal.
+
+    Memory fix (Phase 2, 2.6): this signal runs on the FULL image (not the
+    face crop), so its intermediates are the largest in this file. Free
+    each full-size array as soon as it's no longer needed instead of
+    holding all of them until the function returns. No math changed.
     """
     try:
         import io
@@ -278,6 +283,7 @@ def signal_d_ela(img: Image.Image) -> Tuple[float, str]:
         res_arr  = np.array(resaved,  dtype=np.float32)
 
         ela_map = np.abs(orig_arr - res_arr)
+        del buffer, resaved, orig_arr, res_arr
 
         # Block variance — divide into 8x8 blocks
         h, w = ela_map.shape[:2]
@@ -286,6 +292,7 @@ def signal_d_ela(img: Image.Image) -> Tuple[float, str]:
             for x in range(0, w - 8, 8):
                 block = ela_map[y:y+8, x:x+8]
                 block_vars.append(float(np.var(block)))
+        del ela_map
 
         if not block_vars:
             return 0.0, ""
@@ -306,7 +313,7 @@ def signal_d_ela(img: Image.Image) -> Tuple[float, str]:
         print(f"[BTD-D] Error: {e}")
         return 0.0, ""
 
-
+    
 # ================================================================
 # SIGNAL E — Noise Residual
 # Real cameras always introduce sensor noise.
