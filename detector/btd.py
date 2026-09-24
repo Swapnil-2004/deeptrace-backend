@@ -368,6 +368,7 @@ def signal_f_chromatic_aberration(img: Image.Image) -> Tuple[float, str]:
         # Laplacian of red vs blue — different for real lenses
         lap_r = np.abs(cv2.Laplacian(r_channel, cv2.CV_32F))
         lap_b = np.abs(cv2.Laplacian(b_channel, cv2.CV_32F))
+        del img_arr, r_channel, b_channel
 
         # Chromatic aberration = difference between channels at edges
         chroma = float(np.mean(np.abs(lap_r - lap_b)))
@@ -375,6 +376,7 @@ def signal_f_chromatic_aberration(img: Image.Image) -> Tuple[float, str]:
         # Normalise by mean edge strength
         mean_edge = float(np.mean(lap_r + lap_b)) + 1e-6
         chroma_n  = chroma / mean_edge
+        del lap_r, lap_b
 
         threshold = THRESHOLDS["chroma_real_min"]
         if chroma_n < threshold:
