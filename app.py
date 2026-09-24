@@ -19,6 +19,7 @@ from fastapi.responses import JSONResponse
 
 # ── File size limits ──────────────────────────────────────────
 MAX_IMAGE_BYTES = 10 * 1024 * 1024   # 10MB
+UPLOAD_CHUNK_SIZE = 1024 * 1024      # 1MB - stream in chunks, not one big read
 MAX_VIDEO_BYTES = 50 * 1024 * 1024   # 50MB
 
 # ── Allowed file types ────────────────────────────────────────
@@ -112,11 +113,12 @@ app.add_middleware(
 # ================================================================
 # HELPER FUNCTIONS
 # ================================================================
-def validate_image_file(file: UploadFile, content: bytes) -> None:
+def validate_image_file(file: UploadFile, size: int) -> None:
     """Validate image file type and size. Raises HTTPException if invalid."""
-    # Check size
-    if len(content) > MAX_IMAGE_BYTES:
-        size_mb = len(content) / 1024 / 1024
+    # Check size (already checked once during streaming; kept here too
+    # for defense-in-depth, same message/status as before)
+    if size > MAX_IMAGE_BYTES:
+        size_mb = size / 1024 / 1024
         raise HTTPException(
             status_code = 413,
             detail      = f"File too large ({size_mb:.1f}MB). Maximum is 10MB."
@@ -130,11 +132,11 @@ def validate_image_file(file: UploadFile, content: bytes) -> None:
         )
 
 
-def validate_video_file(file: UploadFile, content: bytes) -> None:
+def validate_video_file(file: UploadFile, size: int) -> None:
     """Validate video file type and size. Raises HTTPException if invalid."""
     # Check size
-    if len(content) > MAX_VIDEO_BYTES:
-        size_mb = len(content) / 1024 / 1024
+    if size > MAX_VIDEO_BYTES:
+        size_mb = size / 1024 / 1024
         raise HTTPException(
             status_code = 413,
             detail      = f"File too large ({size_mb:.1f}MB). Maximum is 50MB."
@@ -147,6 +149,35 @@ def validate_video_file(file: UploadFile, content: bytes) -> None:
             detail      = f"Invalid file type '{ext}'. Accepted: {', '.join(ALLOWED_VIDEO_EXT)}"
         )
 
+
+async def stream_upload_to_temp(file: UploadFile, max_bytes: int, suffix: str) -> tuple[str, int]:
+    """
+    Stream an UploadFile to a temp file on disk in chunks, instead of
+    reading the whole upload into one bytes object in RAM first.
+    Rejects early (stops reading, deletes the partial file) if the upload
+    goes over max_bytes, instead of buffering the whole oversized file first.
+    Returns (temp_file_path, total_bytes_written). Caller must delete the file.
+    """
+    total = 0
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix, dir=tempfile.gettempdir())
+    try:
+        while True:
+            chunk = await file.read(UPLOAD_CHUNK_SIZE)
+            if not chunk:
+                break
+            total += len(chunk)
+            if total > max_bytes:
+                tmp.close()
+                os.remove(tmp.name)
+                size_mb = total / 1024 / 1024
+                raise HTTPException(
+                    status_code = 413,
+                    detail      = f"File too large ({size_mb:.1f}MB+). Maximum is {max_bytes // (1024 * 1024)}MB."
+                )
+            tmp.write(chunk)
+    finally:
+        tmp.close()
+    return tmp.name, total
 
 # ================================================================
 # ROUTES
@@ -197,25 +228,40 @@ async def analyse_image(file: UploadFile = File(...)):
     """
     start_time = time.time()
 
-    # Read file content
+    # Stream upload to a temp file on disk instead of reading it all into RAM
+    ext = os.path.splitext(file.filename or "image.jpg")[1].lower()
     try:
-        content = await file.read()
+        tmp_path, size = await stream_upload_to_temp(file, MAX_IMAGE_BYTES, ext)
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Could not read file: {str(e)}")
 
-    # Validate
-    validate_image_file(file, content)
-
-    # Run detection pipeline
     try:
-        from detector.pipeline import analyse_image_bytes
-        result = analyse_image_bytes(content, file.filename or "image.jpg")
-    except Exception as e:
-        traceback.print_exc()
-        raise HTTPException(
-            status_code = 500,
-            detail      = f"Analysis failed: {str(e)}"
-        )
+        # Validate
+        validate_image_file(file, size)
+
+        # Read back from disk once for the decoder - same bytes as before,
+        # just no longer double-buffered during the network read
+        with open(tmp_path, "rb") as f:
+            content = f.read()
+
+        # Run detection pipeline
+        try:
+            from detector.pipeline import analyse_image_bytes
+            result = analyse_image_bytes(content, file.filename or "image.jpg")
+        except Exception as e:
+            traceback.print_exc()
+            raise HTTPException(
+                status_code = 500,
+                detail      = f"Analysis failed: {str(e)}"
+            )
+    finally:
+        if os.path.exists(tmp_path):
+            try:
+                os.remove(tmp_path)
+            except Exception:
+                pass
 
     # Add processing time
     result["processing_time_ms"] = int((time.time() - start_time) * 1000)
@@ -236,31 +282,23 @@ async def analyse_video(file: UploadFile = File(...)):
     """
     start_time = time.time()
 
-    # Read file content
-    try:
-        content = await file.read()
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Could not read file: {str(e)}")
-
-    # Validate
-    validate_video_file(file, content)
-
-    # Save to temp file — OpenCV needs a file path not bytes
+    # Save to temp file - OpenCV needs a file path not bytes.
+    # Stream straight to disk in chunks instead of reading the whole
+    # video into RAM first and then writing it back out.
     ext      = os.path.splitext(file.filename or "video.mp4")[1].lower()
     tmp_path = None
 
     try:
-        with tempfile.NamedTemporaryFile(
-            delete = False,
-            suffix = ext,
-            dir    = tempfile.gettempdir()
-        ) as tmp:
-            tmp.write(content)
-            tmp_path = tmp.name
+        tmp_path, size = await stream_upload_to_temp(file, MAX_VIDEO_BYTES, ext)
+
+        # Validate
+        validate_video_file(file, size)
 
         from detector.pipeline import analyse_video_file
         result = analyse_video_file(tmp_path, file.filename or "video.mp4")
 
+    except HTTPException:
+        raise
     except Exception as e:
         traceback.print_exc()
         raise HTTPException(
