@@ -189,8 +189,13 @@ async def health_check():
     """
     Quick health check endpoint.
     Frontend calls this to verify backend is alive.
+
+    Deliberately does not import torch: this endpoint must keep working
+    even if torch failed to load at startup (see lifespan()'s try/except),
+    since it is what a host uses to decide the app is alive at all.
+    Render always runs CPU-only torch (see Dockerfile), so gpu is always
+    False there - reporting it without importing torch changes nothing.
     """
-    import torch
     try:
         from detector.pipeline import models_loaded
         loaded = models_loaded()
@@ -199,8 +204,8 @@ async def health_check():
 
     return {
         "status"        : "ok",
-        "gpu"           : torch.cuda.is_available(),
-        "gpu_name"      : torch.cuda.get_device_name(0) if torch.cuda.is_available() else None,
+        "gpu"           : False,
+        "gpu_name"      : None,
         "models_loaded" : loaded,
         "version"       : "1.0.0"
     }
