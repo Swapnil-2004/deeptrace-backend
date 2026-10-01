@@ -235,17 +235,23 @@ def blend_heatmap(original: np.ndarray,
     Returns:
         Blended image (H, W, 3) uint8
     """
-    original_f = original.astype(np.float32)
-    heatmap_f  = heatmap.astype(np.float32)
-
     # Resize heatmap to match original if needed
+    heatmap_u8 = heatmap
     if original.shape[:2] != heatmap.shape[:2]:
         heatmap_pil = Image.fromarray(heatmap)
         heatmap_pil = heatmap_pil.resize(
             (original.shape[1], original.shape[0]),
             Image.LANCZOS
         )
-        heatmap_f = np.array(heatmap_pil, dtype=np.float32)
+        heatmap_u8 = np.array(heatmap_pil)
 
-    blended = (1 - alpha) * original_f + alpha * heatmap_f
-    return blended.clip(0, 255).astype(np.uint8)
+    # Blend in horizontal bands so only a small float32 slice exists at a
+    # time (same per-pixel float32 math as before, so output is identical).
+    out  = np.empty(original.shape, dtype=np.uint8)
+    band = 256
+    for y in range(0, original.shape[0], band):
+        orig_f = original[y:y + band].astype(np.float32)
+        heat_f = heatmap_u8[y:y + band].astype(np.float32)
+        out[y:y + band] = ((1 - alpha) * orig_f + alpha * heat_f
+                           ).clip(0, 255).astype(np.uint8)
+    return out
