@@ -26,6 +26,13 @@ RUN pip install --no-cache-dir torch==2.11.0 torchvision==0.26.0 --extra-index-u
 # Install remaining dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Keep ONE OpenCV only: mediapipe pulls in opencv-contrib-python (5.x), which
+# clashes with opencv-python-headless. Remove both, reinstall headless 4.13 (the
+# version the accuracy was measured on), and fail the build if it is not 4.13.
+RUN pip uninstall -y opencv-contrib-python opencv-python-headless && \
+    pip install --no-cache-dir opencv-python-headless==4.13.0.92 && \
+    python -c "import cv2; assert cv2.__version__.startswith('4.13'), cv2.__version__; print('[Build] OpenCV', cv2.__version__)"
+
 # Copy all project files
 COPY . .
 
