@@ -62,7 +62,7 @@ async def lifespan(app: FastAPI):
     try:
         from detector.pipeline import load_all_models
         load_all_models()
-        print("[OK] All models loaded successfully")
+        print("[OK] Startup finished - models are NOT loaded yet; each one loads on its first request")
     except Exception as e:
         print(f"[WARNING] Model loading failed: {e}")
         print("[INFO] Server will start but detections may fail")
