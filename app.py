@@ -97,6 +97,8 @@ app.add_middleware(
     allow_origins       = [
         "http://localhost:3000",      # VS Code Live Server
         "http://127.0.0.1:3000",
+        "http://localhost:3002",
+        "http://127.0.0.1:3002",
         "http://localhost:5500",      # Another common Live Server port
         "http://127.0.0.1:5500",
     ],
