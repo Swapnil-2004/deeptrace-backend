@@ -60,13 +60,16 @@ def generate_heatmap(
     # ── Apply jet colormap ───────────────────────────────────
     # Normalise to 0-255
     cam_norm = (cam_resized * 255).astype(np.uint8)
+    del cam_resized
     # Apply jet colormap — red=high, blue=low
     cam_color = cv2.applyColorMap(cam_norm, cv2.COLORMAP_JET)
     # Convert BGR to RGB
     cam_rgb = cv2.cvtColor(cam_color, cv2.COLOR_BGR2RGB)
+    del cam_color, cam_norm
 
     # ── Blend with original ──────────────────────────────────
     blended = blend_heatmap(orig_arr, cam_rgb, alpha=0.4)
+    del orig_arr, cam_rgb
 
     # ── Convert to base64 for frontend ──────────────────────
     blended_pil = Image.fromarray(blended)
