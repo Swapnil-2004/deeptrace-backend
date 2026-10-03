@@ -51,6 +51,16 @@ _device      = None
 _hooks       = []
 _activations = {}
 
+# -- ONNX backend (Phase 3) ------------------------------------
+# Only active when the environment variable DEEPTRACE_BACKEND=onnx is set.
+# Without it the torch code below runs exactly as before (Colab, main).
+USE_ONNX      = os.environ.get("DEEPTRACE_BACKEND", "").strip().lower() == "onnx"
+ONNX_PATH     = os.path.join(
+    os.path.dirname(os.path.dirname(__file__)),
+    "models", "effnet_image_fp32.onnx"
+)
+_onnx_session = None
+
 
 def _get_device() -> torch.device:
     """Get best available device — CUDA if available, else CPU."""
@@ -72,6 +82,9 @@ def load_effnet() -> bool:
         True if loaded successfully, False otherwise
     """
     global _model, _device
+
+    if USE_ONNX:
+        return _load_onnx()
 
     _device = _get_device()
     print(f"[EffNet] Using device: {_device}")
@@ -176,6 +189,9 @@ def predict(img: Image.Image) -> Tuple[float, Optional[np.ndarray]]:
         - activations: numpy array of last conv activations for Grad-CAM
                        or None if hook not available
     """
+    if USE_ONNX:
+        return _predict_onnx(img)
+
     if _model is None:
         print("[EffNet] Not loaded yet — loading now (lazy load)...")
         if not load_effnet():
@@ -222,6 +238,10 @@ def unload_effnet() -> None:
     """
     global _model, _hooks, _activations
 
+    if USE_ONNX:
+        _unload_onnx()
+        return
+
     for hook in _hooks:
         hook.remove()
     _hooks = []
@@ -245,4 +265,66 @@ def unload_effnet() -> None:
 
 def is_loaded() -> bool:
     """Check if model is loaded and ready."""
+    if USE_ONNX:
+        return _onnx_session is not None
     return _model is not None
+
+
+# -- ONNX backend (Phase 3) ------------------------------------
+# Used only when DEEPTRACE_BACKEND=onnx. The torch code above is unchanged.
+def _load_onnx() -> bool:
+    global _onnx_session
+    if _onnx_session is not None:
+        return True
+    try:
+        import onnxruntime as ort
+        so = ort.SessionOptions()
+        so.intra_op_num_threads = 1
+        if os.environ.get("DEEPTRACE_ORT_LEAN", "1") != "0":
+            so.graph_optimization_level = ort.GraphOptimizationLevel.ORT_DISABLE_ALL
+            so.enable_cpu_mem_arena = False
+            so.enable_mem_pattern = False
+        _onnx_session = ort.InferenceSession(
+            ONNX_PATH, so, providers=["CPUExecutionProvider"]
+        )
+        print(f"[EffNet] ONNX session loaded: {ONNX_PATH}")
+        return True
+    except Exception as e:
+        print(f"[ERROR] EfficientNet ONNX loading failed: {e}")
+        import traceback
+        traceback.print_exc()
+        _onnx_session = None
+        return False
+
+
+def _predict_onnx(img: Image.Image) -> Tuple[float, Optional[np.ndarray]]:
+    if _onnx_session is None:
+        print("[EffNet] ONNX not loaded yet - loading now (lazy load)...")
+        if not _load_onnx():
+            print("[WARNING] EfficientNet ONNX lazy load failed -- returning 0.5")
+            return 0.5, None
+    try:
+        from utils.image_utils import normalize_for_model
+        x = np.ascontiguousarray(normalize_for_model(img), dtype=np.float32)
+        logits, feat = _onnx_session.run(None, {"input": x})
+        lg = logits[0].astype(np.float64)
+        e = np.exp(lg - lg.max())
+        fake_prob = float(e[1] / e.sum())      # index 1 = fake class
+        return fake_prob, feat                 # feat: (1, 1792, 7, 7) float32
+    except Exception as e:
+        print(f"[ERROR] EfficientNet ONNX prediction failed: {e}")
+        import traceback
+        traceback.print_exc()
+        return 0.5, None
+
+
+def _unload_onnx() -> None:
+    global _onnx_session
+    _onnx_session = None
+    import gc
+    gc.collect()
+    try:
+        import ctypes
+        ctypes.CDLL("libc.so.6").malloc_trim(0)
+    except Exception:
+        pass
