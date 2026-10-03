@@ -6,6 +6,7 @@ __pycache__/
 # Model weights — downloaded at runtime from HuggingFace, not stored in git
 models/*.pth
 models/*.task
+models/*.onnx
 
 # OS files
 .DS_Store
