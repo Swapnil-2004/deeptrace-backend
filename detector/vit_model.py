@@ -24,6 +24,19 @@ VIT_MODEL_ID = "Organika/sdxl-detector"
 _pipeline = None
 _device   = None
 
+# -- ONNX backend (Phase 3) ------------------------------------
+# Only active when the environment variable DEEPTRACE_BACKEND=onnx is set.
+# Without it the torch/HuggingFace code below runs exactly as before
+# (Colab, main).
+import os
+USE_ONNX      = os.environ.get("DEEPTRACE_BACKEND", "").strip().lower() == "onnx"
+ONNX_PATH     = os.path.join(
+    os.path.dirname(os.path.dirname(__file__)),
+    "models", "vit_fp16w.onnx"
+)
+_onnx_session = None
+FAKE_INDEX    = 0   # Organika/sdxl-detector id2label: 0 = artificial (fake)
+
 
 def _get_device() -> str:
     """Get best available device string for HuggingFace pipeline."""
@@ -42,6 +55,9 @@ def load_vit() -> bool:
         True if loaded successfully, False otherwise
     """
     global _pipeline, _device
+
+    if USE_ONNX:
+        return _load_onnx()
 
     _device = _get_device()
     print(f"[ViT] Using device: {_device}")
@@ -82,6 +98,9 @@ def predict(img: Image.Image) -> float:
     Returns:
         fake_score: float 0-1 (1 = definitely AI generated)
     """
+    if USE_ONNX:
+        return _predict_onnx(img)
+
     if _pipeline is None:
         print("[ViT] Not loaded yet — loading now (lazy load)...")
         if not load_vit():
@@ -160,6 +179,9 @@ def unload_vit() -> None:
     time predict() is called.
     """
     global _pipeline
+    if USE_ONNX:
+        _unload_onnx()
+        return
     _pipeline = None
 
     import gc
@@ -178,4 +200,71 @@ def unload_vit() -> None:
 
 def is_loaded() -> bool:
     """Check if model is loaded and ready."""
+    if USE_ONNX:
+        return _onnx_session is not None
     return _pipeline is not None
+
+
+# -- ONNX backend (Phase 3) ------------------------------------
+# Used only when DEEPTRACE_BACKEND=onnx. The HuggingFace code above is unchanged.
+# Preprocessing is the exact numpy emulation of the torch uint8 bicubic
+# resize (detector/vit_preproc.py), so no torch/transformers is needed.
+def _load_onnx() -> bool:
+    global _onnx_session
+    if _onnx_session is not None:
+        return True
+    try:
+        import onnxruntime as ort
+        so = ort.SessionOptions()
+        so.intra_op_num_threads = 1
+        if os.environ.get("DEEPTRACE_ORT_LEAN", "1") != "0":
+            so.graph_optimization_level = ort.GraphOptimizationLevel.ORT_DISABLE_ALL
+            so.enable_cpu_mem_arena = False
+            so.enable_mem_pattern = False
+        _onnx_session = ort.InferenceSession(
+            ONNX_PATH, so, providers=["CPUExecutionProvider"]
+        )
+        print(f"[ViT] ONNX session loaded: {ONNX_PATH}")
+        return True
+    except Exception as e:
+        print(f"[ERROR] ViT ONNX loading failed: {e}")
+        import traceback
+        traceback.print_exc()
+        _onnx_session = None
+        return False
+
+
+def _predict_onnx(img: Image.Image) -> float:
+    if _onnx_session is None:
+        print("[ViT] ONNX not loaded yet - loading now (lazy load)...")
+        if not _load_onnx():
+            print("[WARNING] ViT ONNX lazy load failed -- returning 0.5")
+            return 0.5
+    try:
+        from detector.vit_preproc import resize_u8, to_input
+        x = to_input(resize_u8(img))
+        inp = _onnx_session.get_inputs()[0]
+        out = _onnx_session.get_outputs()[0]
+        dt = np.float16 if "float16" in inp.type else np.float32
+        x = np.ascontiguousarray(x, dtype=dt)
+        logits = _onnx_session.run([out.name], {inp.name: x})[0]
+        lg = np.asarray(logits[0], dtype=np.float64)
+        e = np.exp(lg - lg.max())
+        return float(e[FAKE_INDEX] / e.sum())
+    except Exception as e:
+        print(f"[ERROR] ViT ONNX prediction failed: {e}")
+        import traceback
+        traceback.print_exc()
+        return 0.5
+
+
+def _unload_onnx() -> None:
+    global _onnx_session
+    _onnx_session = None
+    import gc
+    gc.collect()
+    try:
+        import ctypes
+        ctypes.CDLL("libc.so.6").malloc_trim(0)
+    except Exception:
+        pass
