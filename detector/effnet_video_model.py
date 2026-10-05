@@ -18,9 +18,11 @@ matching training) -- crop the face BEFORE calling predict() here.
 ================================================================
 """
 
+from __future__ import annotations   # type hints are not evaluated at load time
 import os
-import torch
-import torch.nn as nn
+if os.environ.get("DEEPTRACE_BACKEND", "").strip().lower() != "onnx":
+    import torch
+    import torch.nn as nn
 import numpy as np
 from PIL import Image
 from typing import Optional, Tuple

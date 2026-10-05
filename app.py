@@ -51,11 +51,14 @@ async def lifespan(app: FastAPI):
     # any computation or results, only how many threads compute
     # them (needed to fit within Render free tier's 512MB RAM).
     try:
-        import torch
         import cv2
-        torch.set_num_threads(1)
         cv2.setNumThreads(1)
-        print("[OK] Limited torch/cv2 to 1 thread each (memory optimization)")
+        if os.environ.get("DEEPTRACE_BACKEND", "").strip().lower() != "onnx":
+            import torch
+            torch.set_num_threads(1)
+            print("[OK] Limited torch/cv2 to 1 thread each (memory optimization)")
+        else:
+            print("[OK] Limited cv2 to 1 thread (ONNX mode, torch not loaded)")
     except Exception as e:
         print(f"[WARNING] Could not set thread limits: {e}")
 

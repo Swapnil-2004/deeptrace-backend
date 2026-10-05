@@ -12,7 +12,9 @@ Together they cover both major categories of fake media.
 ================================================================
 """
 
-import torch
+import os
+if os.environ.get("DEEPTRACE_BACKEND", "").strip().lower() != "onnx":
+    import torch
 import numpy as np
 from PIL import Image
 from typing import Optional, Tuple
