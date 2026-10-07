@@ -100,6 +100,10 @@ def predict(img: Image.Image) -> float:
     Returns:
         fake_score: float 0-1 (1 = definitely AI generated)
     """
+    # Phase 4: remote ViT service (only when VIT_SERVICE_URL is set)
+    if VIT_SERVICE_URL:
+        return _predict_remote(img)
+
     if USE_ONNX:
         return _predict_onnx(img)
 
@@ -270,3 +274,49 @@ def _unload_onnx() -> None:
         ctypes.CDLL("libc.so.6").malloc_trim(0)
     except Exception:
         pass
+
+
+# -- Phase 4: remote ViT service client + service entry point ---------------
+# VIT_SERVICE_URL unset  -> nothing here is used (in-process path unchanged).
+# VIT_SERVICE_URL set    -> predict() resizes locally (exact, same resize_u8)
+#                           and sends only the 224x224x3 uint8 picture.
+VIT_SERVICE_URL = os.environ.get("VIT_SERVICE_URL", "").strip().rstrip("/")
+
+
+def _predict_remote(img: Image.Image) -> float:
+    import json
+    import time
+    import urllib.request
+    from detector.vit_preproc import resize_u8
+    body = np.ascontiguousarray(resize_u8(img), dtype=np.uint8).tobytes()
+    last = None
+    for attempt in range(4):
+        try:
+            req = urllib.request.Request(
+                VIT_SERVICE_URL + "/predict", data=body, method="POST",
+                headers={"Content-Type": "application/octet-stream"})
+            with urllib.request.urlopen(req, timeout=90) as r:
+                return float(json.loads(r.read().decode("utf-8"))["fake_score"])
+        except Exception as e:
+            last = e
+            print(f"[ViT] remote call failed (try {attempt + 1}/4): {e}")
+            time.sleep(5 * (attempt + 1))
+    # Remote mode fails loudly on purpose (no silent 0.5 verdict).
+    raise RuntimeError(f"ViT service unavailable after 4 tries: {last}")
+
+
+def predict_u8(u8) -> float:
+    # u8: 224x224x3 uint8 (already resized). Used by vit_service.py.
+    if _onnx_session is None:
+        if not _load_onnx():
+            raise RuntimeError("ViT ONNX model could not be loaded")
+    from detector.vit_preproc import to_input
+    x = to_input(u8)
+    inp = _onnx_session.get_inputs()[0]
+    out = _onnx_session.get_outputs()[0]
+    dt = np.float16 if "float16" in inp.type else np.float32
+    x = np.ascontiguousarray(x, dtype=dt)
+    logits = _onnx_session.run([out.name], {inp.name: x})[0]
+    lg = np.asarray(logits[0], dtype=np.float64)
+    e = np.exp(lg - lg.max())
+    return float(e[FAKE_INDEX] / e.sum())
