@@ -279,20 +279,28 @@ def signal_d_ela(img: Image.Image) -> Tuple[float, str]:
 
         # Reload and compute difference
         resaved = Image.open(buffer).convert("RGB")
-        orig_arr = np.array(img_rgb,  dtype=np.float32)
-        res_arr  = np.array(resaved,  dtype=np.float32)
+        del buffer
 
-        ela_map = np.abs(orig_arr - res_arr)
-        del buffer, resaved, orig_arr, res_arr
-
-        # Block variance — divide into 8x8 blocks
-        h, w = ela_map.shape[:2]
+        # Phase 3.6c: ELA computed in horizontal bands (multiples of 8 rows)
+        # so full-size float32 arrays never exist. Same per-pixel values,
+        # same 8x8 blocks, same order -> same result (parity-tested).
+        w, h = img_rgb.size
         block_vars = []
-        for y in range(0, h - 8, 8):
-            for x in range(0, w - 8, 8):
-                block = ela_map[y:y+8, x:x+8]
-                block_vars.append(float(np.var(block)))
-        del ela_map
+        BAND_ROWS = 256
+        for b0 in range(0, h - 8, BAND_ROWS):
+            ys = range(b0, min(b0 + BAND_ROWS, h - 8), 8)
+            lo = ys[0]
+            hi = ys[-1] + 8
+            o_band = np.array(img_rgb.crop((0, lo, w, hi)), dtype=np.float32)
+            r_band = np.array(resaved.crop((0, lo, w, hi)), dtype=np.float32)
+            ela_band = np.abs(o_band - r_band)
+            del o_band, r_band
+            for y in ys:
+                for x in range(0, w - 8, 8):
+                    block = ela_band[y - lo:y - lo + 8, x:x + 8]
+                    block_vars.append(float(np.var(block)))
+            del ela_band
+        del resaved
 
         if not block_vars:
             return 0.0, ""
