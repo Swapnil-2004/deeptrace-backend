@@ -22,6 +22,13 @@ MAX_IMAGE_BYTES = 10 * 1024 * 1024   # 10MB
 UPLOAD_CHUNK_SIZE = 1024 * 1024      # 1MB - stream in chunks, not one big read
 MAX_VIDEO_BYTES = 50 * 1024 * 1024   # 50MB
 
+# Phase 3.6d: reject-only pixel limit for images (memory grows with pixels).
+# Default 6 MP; raise or lower with the environment variable DEEPTRACE_MAX_MP.
+try:
+    MAX_IMAGE_MEGAPIXELS = float(os.environ.get("DEEPTRACE_MAX_MP", "6"))
+except ValueError:
+    MAX_IMAGE_MEGAPIXELS = 6.0
+
 # ── Allowed file types ────────────────────────────────────────
 ALLOWED_IMAGE_TYPES = {
     "image/jpeg", "image/jpg", "image/png", "image/webp"
@@ -250,6 +257,29 @@ async def analyse_image(file: UploadFile = File(...)):
     try:
         # Validate
         validate_image_file(file, size)
+
+        # Phase 3.6d: reject-only pixel limit. Reads only the image header
+        # (width, height); nothing is decoded. Accepted images are unchanged.
+        try:
+            from PIL import Image as _PILImage
+            with _PILImage.open(tmp_path) as _im:
+                _w, _h = _im.size
+        except _PILImage.DecompressionBombError:
+            raise HTTPException(
+                status_code = 413,
+                detail      = (f"Image has far too many pixels. Maximum is "
+                               f"{MAX_IMAGE_MEGAPIXELS:g} megapixels. "
+                               "Please resize it and try again.")
+            )
+        except Exception:
+            _w = _h = 0
+        if _w * _h > MAX_IMAGE_MEGAPIXELS * 1_000_000:
+            raise HTTPException(
+                status_code = 413,
+                detail      = (f"Image is {_w * _h / 1e6:.1f} megapixels ({_w}x{_h}). "
+                               f"Maximum is {MAX_IMAGE_MEGAPIXELS:g} megapixels. "
+                               "Please resize it and try again.")
+            )
 
         # Read back from disk once for the decoder - same bytes as before,
         # just no longer double-buffered during the network read
