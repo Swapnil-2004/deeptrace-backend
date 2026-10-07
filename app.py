@@ -29,6 +29,13 @@ try:
 except ValueError:
     MAX_IMAGE_MEGAPIXELS = 6.0
 
+# Phase 3.6e: reject-only resolution limit for videos (megapixels per frame).
+# Default 1.0 (about 1280x720). Raise or lower with DEEPTRACE_MAX_VIDEO_MP.
+try:
+    MAX_VIDEO_MEGAPIXELS = float(os.environ.get("DEEPTRACE_MAX_VIDEO_MP", "1.0"))
+except ValueError:
+    MAX_VIDEO_MEGAPIXELS = 1.0
+
 # ── Allowed file types ────────────────────────────────────────
 ALLOWED_IMAGE_TYPES = {
     "image/jpeg", "image/jpg", "image/png", "image/webp"
@@ -333,6 +340,26 @@ async def analyse_video(file: UploadFile = File(...)):
 
         # Validate
         validate_video_file(file, size)
+
+        # Phase 3.6e: reject-only video resolution limit. Reads only the
+        # video header (width, height); no frame is decoded. Nothing is
+        # resized, so accepted videos give the same result as before.
+        try:
+            import cv2 as _cv2
+            _cap = _cv2.VideoCapture(tmp_path)
+            _vw = int(_cap.get(_cv2.CAP_PROP_FRAME_WIDTH))
+            _vh = int(_cap.get(_cv2.CAP_PROP_FRAME_HEIGHT))
+            _cap.release()
+        except Exception:
+            _vw = _vh = 0
+        if _vw * _vh > MAX_VIDEO_MEGAPIXELS * 1_000_000:
+            raise HTTPException(
+                status_code = 413,
+                detail      = (f"Video is {_vw}x{_vh} ({_vw * _vh / 1e6:.1f} megapixels per frame). "
+                               f"Maximum is {MAX_VIDEO_MEGAPIXELS:g} megapixels per frame. "
+                               "Please export it at a lower resolution "
+                               "(for example 1280x720) and try again.")
+            )
 
         from detector.pipeline import analyse_video_file
         result = analyse_video_file(tmp_path, file.filename or "video.mp4")
