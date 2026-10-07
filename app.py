@@ -388,6 +388,136 @@ async def analyse_video(file: UploadFile = File(...)):
 
 
 # ================================================================
+# Phase 4b: VIDEO JOBS (job-and-poll)
+#   POST /analyse/video/start           -> returns a job_id at once
+#   GET  /analyse/video/status/{job_id} -> running | done (+result) | error
+# The old /analyse/video route above is unchanged. Only ONE video job runs
+# at a time (a 512 MB server cannot hold two). Jobs live in memory only.
+# ================================================================
+import threading
+import uuid
+
+_JOBS = {}
+_JOBS_LOCK = threading.Lock()
+_RUN_LOCK = threading.Lock()
+JOB_KEEP_SECONDS = 15 * 60
+
+
+def _purge_jobs() -> None:
+    now = time.time()
+    with _JOBS_LOCK:
+        for jid in [k for k, v in _JOBS.items()
+                    if v["status"] != "running" and now - v["created"] > JOB_KEEP_SECONDS]:
+            del _JOBS[jid]
+
+
+def _video_resolution_message(tmp_path: str):
+    """Same reject-only rule as the old route. Returns a message or None."""
+    try:
+        import cv2 as _cv2
+        _cap = _cv2.VideoCapture(tmp_path)
+        _vw = int(_cap.get(_cv2.CAP_PROP_FRAME_WIDTH))
+        _vh = int(_cap.get(_cv2.CAP_PROP_FRAME_HEIGHT))
+        _cap.release()
+    except Exception:
+        return None
+    if _vw * _vh > MAX_VIDEO_MEGAPIXELS * 1_000_000:
+        return (f"Video is {_vw}x{_vh} ({_vw * _vh / 1e6:.1f} megapixels per frame). "
+                f"Maximum is {MAX_VIDEO_MEGAPIXELS:g} megapixels per frame. "
+                "Please export it at a lower resolution "
+                "(for example 1280x720) and try again.")
+    return None
+
+
+def _run_video_job(job_id: str, tmp_path: str, filename: str) -> None:
+    t0 = time.time()
+    try:
+        from detector.pipeline import analyse_video_file
+        result = analyse_video_file(tmp_path, filename)
+        result["processing_time_ms"] = int((time.time() - t0) * 1000)
+        result["filename"] = filename
+        with _JOBS_LOCK:
+            _JOBS[job_id].update(status="done", result=result)
+    except Exception as e:
+        traceback.print_exc()
+        with _JOBS_LOCK:
+            _JOBS[job_id].update(status="error",
+                                 error=f"Video analysis failed: {str(e)}")
+    finally:
+        if tmp_path and os.path.exists(tmp_path):
+            try:
+                os.remove(tmp_path)
+            except Exception:
+                pass
+        _RUN_LOCK.release()
+
+
+@app.post("/analyse/video/start")
+async def analyse_video_start(file: UploadFile = File(...)):
+    """Upload a video and start analysing it in the background."""
+    _purge_jobs()
+    if not _RUN_LOCK.acquire(blocking=False):
+        raise HTTPException(
+            status_code = 503,
+            detail      = "Another video is being analysed. Please try again in a minute.",
+            headers     = {"Retry-After": "60"}
+        )
+    started  = False
+    tmp_path = None
+    try:
+        ext = os.path.splitext(file.filename or "video.mp4")[1].lower()
+        tmp_path, size = await stream_upload_to_temp(file, MAX_VIDEO_BYTES, ext)
+        validate_video_file(file, size)
+        msg = _video_resolution_message(tmp_path)
+        if msg:
+            raise HTTPException(status_code=413, detail=msg)
+        job_id = uuid.uuid4().hex
+        with _JOBS_LOCK:
+            _JOBS[job_id] = {"status": "running", "created": time.time()}
+        threading.Thread(
+            target=_run_video_job,
+            args=(job_id, tmp_path, file.filename or "video.mp4"),
+            daemon=True
+        ).start()
+        started = True
+        return JSONResponse(content={"job_id": job_id, "status": "running"})
+    except HTTPException:
+        raise
+    except Exception as e:
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Could not start video analysis: {str(e)}")
+    finally:
+        if not started:
+            if tmp_path and os.path.exists(tmp_path):
+                try:
+                    os.remove(tmp_path)
+                except Exception:
+                    pass
+            _RUN_LOCK.release()
+
+
+@app.get("/analyse/video/status/{job_id}")
+async def analyse_video_status(job_id: str):
+    """Poll a video job: running, done (with the full result) or error."""
+    _purge_jobs()
+    with _JOBS_LOCK:
+        job = _JOBS.get(job_id)
+        snap = dict(job) if job else None
+    if snap is None:
+        raise HTTPException(
+            status_code = 404,
+            detail      = ("Job not found. It may have expired or the server "
+                           "restarted. Please upload the video again.")
+        )
+    if snap["status"] == "done":
+        return JSONResponse(content={"status": "done", "result": snap["result"]})
+    if snap["status"] == "error":
+        return JSONResponse(content={"status": "error", "detail": snap["error"]})
+    return JSONResponse(content={"status": "running",
+                                 "seconds": int(time.time() - snap["created"])})
+
+
+# ================================================================
 # RUN — for local development
 # Command: python app.py
 # Or:      uvicorn app:app --host 0.0.0.0 --port 8000 --reload
