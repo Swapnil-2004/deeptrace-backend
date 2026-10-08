@@ -1,0 +1,16 @@
+# DeepTrace API service (Phase 4) - lean ONNX path, no torch. Render: Dockerfile Path = Dockerfile.api
+FROM python:3.10-slim
+ENV PYTHONUNBUFFERED=1 PYTHONIOENCODING=utf-8 DEEPTRACE_BACKEND=onnx PIP_NO_CACHE_DIR=1 PIP_DISABLE_PIP_VERSION_CHECK=1
+WORKDIR /app
+RUN apt-get update && apt-get install -y --no-install-recommends libglib2.0-0 libsm6 libxext6 libxrender-dev libgl1 libgles2 libegl1 libgstreamer1.0-0 libgomp1 && rm -rf /var/lib/apt/lists/*
+COPY requirements_api.txt .
+RUN pip install -r requirements_api.txt
+RUN pip uninstall -y opencv-contrib-python opencv-python-headless && pip install opencv-python-headless==4.13.0.92 && python -c "import cv2; assert cv2.__version__.startswith('4.13'), cv2.__version__; print('[Build] OpenCV', cv2.__version__)"
+COPY docker_fetch.py .
+RUN python docker_fetch.py effnet_image_fp32.onnx 97b8842e67d57341f9ad75f15719f2174cdda07b8725e73069dad06ff423ea4e && python docker_fetch.py effnet_video_fp32.onnx 3a208c55ede8cec97586d674f494917be830bba6421d94042914aee28f6c714e && python docker_fetch.py face_landmarker.task 64184e229b263107bc2b804c6625db1341ff2bb731874b0bcc2fe6544e0bc9ff
+COPY app.py .
+COPY detector/ detector/
+COPY utils/ utils/
+RUN python -c "import importlib.util as u; print('[Build] torch installed:', u.find_spec('torch') is not None)"
+EXPOSE 10000
+CMD ["sh", "-c", "uvicorn app:app --host 0.0.0.0 --port ${PORT:-10000}"]

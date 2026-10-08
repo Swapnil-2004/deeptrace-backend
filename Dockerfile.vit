@@ -1,0 +1,13 @@
+# DeepTrace ViT service (Phase 4) - holds ONLY the ViT. Render: Dockerfile Path = Dockerfile.vit
+FROM python:3.10-slim
+ENV PYTHONUNBUFFERED=1 PYTHONIOENCODING=utf-8 DEEPTRACE_BACKEND=onnx PIP_NO_CACHE_DIR=1 PIP_DISABLE_PIP_VERSION_CHECK=1
+WORKDIR /app
+RUN apt-get update && apt-get install -y --no-install-recommends libgomp1 && rm -rf /var/lib/apt/lists/*
+COPY requirements_vit.txt .
+RUN pip install -r requirements_vit.txt
+COPY docker_fetch.py .
+RUN python docker_fetch.py vit_fp16w.onnx c190367590ba199178237cb7e5db0bca6444b3c073327dd11df17f05455ed989
+COPY vit_service.py .
+COPY detector/__init__.py detector/vit_model.py detector/vit_preproc.py detector/
+EXPOSE 10000
+CMD ["sh", "-c", "uvicorn vit_service:app --host 0.0.0.0 --port ${PORT:-10000}"]
