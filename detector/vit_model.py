@@ -290,7 +290,8 @@ def _predict_remote(img: Image.Image) -> float:
     from detector.vit_preproc import resize_u8
     body = np.ascontiguousarray(resize_u8(img), dtype=np.uint8).tobytes()
     last = None
-    for attempt in range(4):
+    _waits = (10, 20, 30, 45, 60, 0)
+    for attempt in range(6):
         try:
             req = urllib.request.Request(
                 VIT_SERVICE_URL + "/predict", data=body, method="POST",
@@ -299,10 +300,10 @@ def _predict_remote(img: Image.Image) -> float:
                 return float(json.loads(r.read().decode("utf-8"))["fake_score"])
         except Exception as e:
             last = e
-            print(f"[ViT] remote call failed (try {attempt + 1}/4): {e}")
-            time.sleep(5 * (attempt + 1))
+            print(f"[ViT] remote call failed (try {attempt + 1}/6): {e}")
+            time.sleep(_waits[attempt])
     # Remote mode fails loudly on purpose (no silent 0.5 verdict).
-    raise RuntimeError(f"ViT service unavailable after 4 tries: {last}")
+    raise RuntimeError(f"ViT service unavailable after 6 tries: {last}")
 
 
 def predict_u8(u8) -> float:
