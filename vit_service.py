@@ -8,6 +8,7 @@ Run:  uvicorn vit_service:app --host 0.0.0.0 --port 8001
 import os
 os.environ.setdefault("DEEPTRACE_BACKEND", "onnx")   # never load torch here
 import threading
+from contextlib import asynccontextmanager
 
 import numpy as np
 from fastapi import FastAPI, HTTPException, Request
@@ -15,7 +16,21 @@ from fastapi.concurrency import run_in_threadpool
 
 EXPECTED_BYTES = 224 * 224 * 3
 
-app = FastAPI(title="DeepTrace ViT service", version="1.0.0")
+@asynccontextmanager
+async def _lifespan(_app):
+    # Load the model BEFORE the service answers anything, so Render holds
+    # the waking request until the model is ready (a load inside the first
+    # request starves the 0.1 CPU and the health check restarts the instance).
+    # Same model, same session settings: scores cannot change.
+    from detector import vit_model
+    if not vit_model._load_onnx():
+        raise RuntimeError("ViT ONNX model could not be loaded at startup")
+    vit_model.predict_u8(np.zeros((224, 224, 3), dtype=np.uint8))  # warm-up
+    print("[ViT service] model loaded and warmed up", flush=True)
+    yield
+
+
+app = FastAPI(title="DeepTrace ViT service", version="1.0.0", lifespan=_lifespan)
 _lock = threading.Lock()   # one prediction at a time (keeps memory low)
 
 
